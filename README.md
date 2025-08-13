@@ -24,7 +24,7 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Installation
 
-1. Download the latest `Qollect.zip` from the [Releases]([#](https://github.com/EliGohar85/Qollect/releases)) page.  
+1. Download the latest `Qollect.zip` from the Releases page.  
 2. Open the Qlik Sense Management Console (QMC) and navigate to **Extensions**.  
 3. Upload `Qollect.zip`.  
 4. In your app, drag the **Qollect** visualization onto a sheet, click it, and you’ll have your metadata in just one click.
