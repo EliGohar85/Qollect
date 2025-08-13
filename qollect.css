@@ -1,0 +1,115 @@
+/* Root wrapper */
+.qollect__wrap{
+  height:100%;
+  width:100%;
+  box-sizing:border-box;                 /* keep padding inside width -> no clipping */
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding:8px;
+  overflow:auto;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+/* propagate box-sizing to children only inside this component */
+.qollect__wrap *, .qollect__wrap *::before, .qollect__wrap *::after{
+  box-sizing:inherit;
+}
+
+/* Card */
+.qollect__card{
+  width:100%;
+  max-width:640px;                       /* was 720px -> a bit narrower */
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:clamp(12px, 2vw, 18px);
+  background:#fff;
+  box-shadow:0 4px 16px rgba(0,0,0,.06);
+}
+
+/* Title */
+.qollect__title{
+  margin:0 0 8px 0;
+  font-size:16px;
+  font-weight:600;
+  color:#111827;
+}
+
+/* Real list */
+.qollect__list{
+  list-style:none;
+  padding:0;
+  margin:0 0 12px 0;
+  display:block;
+}
+.qollect__list-item{
+  border-top:1px solid #f1f5f9;
+}
+.qollect__list-item:first-child{ border-top:none; }
+
+/* List row (responsive grid, no subtitle column) */
+.qollect__item{
+  display:grid;
+  grid-template-columns:18px 1fr;       /* checkbox | label */
+  align-items:center;
+  column-gap:12px;
+  row-gap:2px;
+  padding:10px 6px;
+  cursor:pointer;
+}
+.qollect__item:hover{ background:#f9fafb; }
+
+.qollect__chk{
+  width:16px;
+  height:16px;
+  grid-column:1;
+  accent-color:#2e7d32;                 /* nicer checkbox color (supported broadly) */
+}
+
+.qollect__label{
+  grid-column:2;
+  min-width:0;
+  font-weight:600;
+  color:#111827;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Keyboard focus hint */
+.qollect__chk:focus-visible + .qollect__label{
+  outline:2px solid #2563eb;
+  outline-offset:2px;
+}
+
+/* Button */
+.qollect__btn{
+  padding:10px 16px;
+  border:none;
+  border-radius:8px;
+  background:#2e7d32;
+  color:#fff;
+  font-weight:600;
+  cursor:pointer;
+  box-shadow:0 2px 6px rgba(0,0,0,.12);
+}
+.qollect__btn:hover{ filter:brightness(1.05); }
+.qollect__btn:disabled{ opacity:.6; cursor:default; }
+
+/* Footnote */
+.qollect__note{
+  margin:8px 0 0 0;
+  font-size:12px;
+  color:#6b7280;
+}
+
+/* ====== Breakpoints ====== */
+@media (max-width: 560px){
+  .qollect__label{ white-space:normal; }  /* allow wrap on narrow panes */
+  .qollect__btn{ width:100%; }            /* easier tapping */
+  .qollect__card{ padding:12px; }
+}
+
+/* Slightly larger UI for very narrow objects */
+@media (max-width: 360px){
+  .qollect__title{ font-size:14px; }
+}
