@@ -529,7 +529,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
             </ul>
 
             <button id="btn-${id}" class="qollect__btn" type="button">Export Selected (XLS)</button>
-            <p class="qollect__note">Each selection becomes its own sheet. Headers are frozen & filterable.</p>
+            <p class="qollect__note">Each selection becomes its own sheet.</p>
           </div>
         </div>
       `);
