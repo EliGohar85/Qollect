@@ -16,7 +16,7 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Features
 
-- Collects key Qlik app metadata components - dimensions, measures, charts, and sheets — into a structured format.  
+- Collects key Qlik app metadata components - dimensions, measures, fields, charts, variables and sheets — into a structured format.  
 - **One-click** metadata collection inside your Qlik Sense app.  
 - Clean, minimal output - ideal for sharing, reviewing, or maintaining documentation.
 
