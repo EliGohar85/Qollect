@@ -40,7 +40,8 @@ Do you have a feature idea or have you found a bug?
 
 ## Project Links
 
-- **GitHub (source & releases):** https://github.com/EliGohar85/Qollect  
+- **GitHub (source & releases):** https://github.com/EliGohar85/Qollect
+- **Regarden Marketplace:** https://www.regarden.io/extensions/3170c06d-0cbb-462f-a3e6-5303f9763249  
 - **Ko-fi (support):** https://ko-fi.com/eligohar
 
 ---
