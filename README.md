@@ -16,7 +16,7 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Features
 
-- Collects key Qlik app metadata components - dimensions, measures, fields, charts, variables and sheets — into a structured format.  
+- Collects key Qlik app metadata components - dimensions, measures, fields, charts, variables and sheets - into a structured format.  
 - **One-click** metadata collection inside your Qlik Sense app.  
 - Clean, minimal output - ideal for sharing, reviewing, or maintaining documentation.
 
@@ -57,7 +57,7 @@ If Qollect saves you time, consider supporting development:
 
 ### 1.1.0
 - Added **App Overview** sheet (first in workbook) summarizing: Application Name, Application ID, # of Dimensions, # of Measures, # of Fields, # of Sheets, # of Charts, # of Variables, and Stream.  
-- Added **field usage mapping** (“Used In”: Chart, Set analysis, Dimension, Measure, Variable) and **unused field highlighting**.  
+- Added **field usage mapping** ("Used In": Chart, Set analysis, Dimension, Measure, Variable) and **unused field highlighting**.  
 - **Unused master items (Dimensions/Measures):** highlighting and usage counts (including alternates).
 
 ---
