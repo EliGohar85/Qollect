@@ -24,7 +24,7 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Installation
 
-1. Download the latest `Qollect.zip` from the Releases page.  
+1. Download the latest `Qollect.zip` from the **[Releases page](https://github.com/EliGohar85/Qollect/releases)**.  
 2. Open the Qlik Sense Management Console (QMC) and navigate to **Extensions**.  
 3. Upload `Qollect.zip`.  
 4. In your app, drag the **Qollect** visualization onto a sheet, click it, and you’ll have your metadata in just one click.
@@ -33,7 +33,31 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Contributions & Feedback
 
-Do you have a feature idea or have you found a bug? Feel free to open an issue or submit a pull request.
+Do you have a feature idea or have you found a bug?  
+- Open an issue or submit a PR on **GitHub:** https://github.com/EliGohar85/Qollect
+
+---
+
+## Project Links
+
+- **GitHub (source & releases):** https://github.com/EliGohar85/Qollect  
+- **Ko-fi (support):** https://ko-fi.com/eligohar
+
+---
+
+## Support
+
+If Qollect saves you time, consider supporting development:  
+**Ko-fi:** https://ko-fi.com/eligohar
+
+---
+
+## Changelog
+
+### 1.1.0
+- Added **App Overview** sheet (first in workbook) summarizing: Application Name, Application ID, # of Dimensions, # of Measures, # of Fields, # of Sheets, # of Charts, # of Variables, and Stream.  
+- Added **field usage mapping** (“Used In”: Chart, Set analysis, Dimension, Measure, Variable) and **unused field highlighting**.  
+- **Unused master items (Dimensions/Measures):** highlighting and usage counts (including alternates).
 
 ---
 
