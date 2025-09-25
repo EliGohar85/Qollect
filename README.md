@@ -56,9 +56,9 @@ If Qollect saves you time, consider supporting development:
 ## Changelog
 
 ### 1.1.0
-- Added **App Overview** sheet (first in workbook) summarizing: Application Name, Application ID, # of Dimensions, # of Measures, # of Fields, # of Sheets, # of Charts, # of Variables, and Stream.  
+- Added **App Overview** sheet (first in workbook) summarizing: # of Dimensions, # of Measures, # of Fields, # of Sheets, # of Charts, # of Variables.  
 - Added **field usage mapping** ("Used In": Chart, Set analysis, Dimension, Measure, Variable) and **unused field highlighting**.  
-- **Unused master items (Dimensions/Measures):** highlighting and usage counts (including alternates).
+- **Unused master items (Dimensions/Measures):** highlighting and usage counts.
 
 ---
 
