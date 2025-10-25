@@ -91,7 +91,16 @@
   font-weight:600;
   cursor:pointer;
   box-shadow:0 2px 6px rgba(0,0,0,.12);
+  flex: 1 1 220px;
 }
+
+.qollect__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .qollect__btn:hover{ filter:brightness(1.05); }
 .qollect__btn:disabled{ opacity:.6; cursor:default; }
 
