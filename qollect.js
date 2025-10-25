@@ -90,6 +90,16 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     }
   }
 
+  // ------- NEW: plain text downloader (for .qvs) -------
+  function downloadText(filename, text){
+    const name = filename && filename.trim() ? filename : 'script';
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = (window.URL||window.webkitURL).createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name.endsWith('.qvs') ? name : `${name}.qvs`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ document.body.removeChild(a); (window.URL||window.webkitURL).revokeObjectURL(url); },0);
+  }
+
   // ------- Engine helpers -------
   function getDoc(app){
     const doc = app && app.model && app.model.enigmaModel;
@@ -209,6 +219,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           pushExpr(lo?.qDef?.qLabelExpression, `${path}/qListObjectDef/qDef/qLabelExpression`);
           pushExpr(lo?.qCalcCond, `${path}/qListObjectDef/qCalcCond`);
         }
+
         if (node.qHyperCubeDef) {
           const hc = node.qHyperCubeDef;
           (hc.qDimensions||[]).forEach((d,i)=>{
@@ -228,16 +239,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           pushExpr(hc.qSuppressMissing, `${path}/qHyperCubeDef/qSuppressMissing`);
         }
 
-        pushExpr(node.title, `${path}/title`);
-        pushExpr(node.subtitle, `${path}/subtitle`);
-        pushExpr(node.footnote, `${path}/footnote`);
-        pushExpr(node.qTitleExpression, `${path}/qTitleExpression`);
-        pushExpr(node.qSubtitleExpression, `${path}/qSubtitleExpression`);
-        pushExpr(node.qFootnoteExpression, `${path}/qFootnoteExpression`);
-        pushExpr(node.showCondition, `${path}/showCondition`);
-        pushExpr(node.colorExpression, `${path}/colorExpression`);
-        pushExpr(node.sortByExpression?.qExpression, `${path}/sortByExpression/qExpression`, true);
-
+        // generic recursion (lets us reach qLayoutExclude)
         for (const k of Object.keys(node)) {
           const v=node[k];
           if (typeof v === 'string') pushExpr(v, `${path}/${k}`);
@@ -275,8 +277,22 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       visited.add(objId);
       try {
         const objModel = await app.getObject(objId);
-        const p = await objModel.getProperties();
-        objs.push({ sheetTitle: sheet.title, sheetId: sheet.id, objectId: objId, props: p });
+
+        const p = await objModel.getProperties().catch(()=>null);
+        const l = await objModel.getLayout().catch(()=>null);
+
+        // merge any qLayoutExclude we can see (layout or props)
+        const propsForScan = (() => {
+          const exL = l && l.qLayoutExclude ? l.qLayoutExclude : null;
+          const exP = p && p.qLayoutExclude ? p.qLayoutExclude : null;
+          if (p && (exL || exP)) return { ...p, qLayoutExclude: (exL || exP) };
+          if (p) return p;
+          if (exL || exP) return { qLayoutExclude: (exL || exP) };
+          return {};
+        })();
+
+        objs.push({ sheetTitle: sheet.title, sheetId: sheet.id, objectId: objId, props: propsForScan });
+
         let kids = [];
         try { kids = await objModel.getChildInfos(); } catch {}
         if (Array.isArray(kids) && kids.length) {
@@ -296,7 +312,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         if (Array.isArray(childInfos) && childInfos.length) {
           for (const ch of childInfos) await addObjectById(ch.qId || ch.id || ch.Id, sh);
         } else {
-          const props = await sheetModel.getProperties();
+          const props = await sheetModel.getProperties().catch(()=>null);
           const cells = Array.isArray(props?.cells) ? props.cells : [];
           for (const c of cells) await addObjectById(c.name || c.qId || c.id, sh);
         }
@@ -371,8 +387,12 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       if (masterId) {
         try {
           const masterModel = await app.getObject(masterId);
-          const mp = await masterModel.getProperties();
-          scanPropsForLibraryIds(mp, o.objectId);
+          const mp = await masterModel.getProperties().catch(()=>null);
+          const ml = await masterModel.getLayout().catch(()=>null);
+          const propsForScan = mp
+            ? (ml && ml.qLayoutExclude ? { ...mp, qLayoutExclude: ml.qLayoutExclude } : mp)
+            : (ml && ml.qLayoutExclude ? { qLayoutExclude: ml.qLayoutExclude } : {});
+          scanPropsForLibraryIds(propsForScan, o.objectId);
         } catch(e){}
       }
     }
@@ -464,6 +484,68 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     }));
   }
 
+  // ------- helper: mark fields from alt dimensions/measures in qLayoutExclude (inline + master) -------
+  async function markFieldsFromLayoutExclude(app, props, addUse, allFieldsSet, markExpr){
+    const ex = (props && props.qLayoutExclude && props.qLayoutExclude.qHyperCubeDef)
+             || (props && props.qHyperCubeDef && props.qHyperCubeDef.qLayoutExclude && props.qHyperCubeDef.qLayoutExclude.qHyperCubeDef)
+             || null;
+    if (!ex) return;
+
+    const asArray = v => Array.isArray(v) ? v : (v != null ? [v] : []);
+
+    // alt dimensions
+    for (const d of asArray(ex.qDimensions)) {
+      const qd = d && d.qDef ? d.qDef : null;
+
+      // inline field defs
+      const defs = qd
+        ? (Array.isArray(qd.qFieldDefs) && qd.qFieldDefs.length ? qd.qFieldDefs
+           : (qd.qFieldDef ? [qd.qFieldDef] : []))
+        : [];
+      for (const f of defs) {
+        const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
+        if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+        // also parse expression-style strings if user typed e.g. "=Only([Dim2])"
+        if (typeof f === 'string' && f.trim().startsWith('=')) markExpr(f, 'Chart');
+      }
+
+      // master dimension used as alternative
+      if (d && typeof d.qLibraryId === 'string' && d.qLibraryId.trim()) {
+        try {
+          const dimModel = await app.getDimension(d.qLibraryId);
+          const dp = await dimModel.getProperties();
+          const arr = Array.isArray(dp?.qDim?.qFieldDefs) ? dp.qDim.qFieldDefs : [];
+          const dd  = Array.isArray(dp?.qDim?.qDrillDownFieldDefs) ? dp.qDim.qDrillDownFieldDefs : [];
+          for (const f of [...arr, ...dd]) {
+            const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
+            if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+          }
+          if (dp?.qDim?.qLabelExpression) markExpr(dp.qDim.qLabelExpression, 'Chart');
+        } catch(e){}
+      }
+
+      if (qd?.qLabelExpression) markExpr(qd.qLabelExpression, 'Chart');
+      if (d?.qCalcCond)         markExpr(d.qCalcCond, 'Chart');
+    }
+
+    // alt measures
+    for (const m of asArray(ex.qMeasures)) {
+      if (m?.qDef?.qDef)               markExpr(m.qDef.qDef, 'Chart');
+      if (m?.qDef?.qLabelExpression)   markExpr(m.qDef.qLabelExpression, 'Chart');
+      if (m?.qSortByExpression?.qExpression) markExpr(m.qSortByExpression.qExpression, 'Chart');
+
+      // master measure used as alternative
+      if (m && typeof m.qLibraryId === 'string' && m.qLibraryId.trim()) {
+        try {
+          const msrModel = await app.getMeasure(m.qLibraryId);
+          const mp = await msrModel.getProperties();
+          if (mp?.qMeasure?.qDef)             markExpr(mp.qMeasure.qDef, 'Chart');
+          if (mp?.qMeasure?.qLabelExpression) markExpr(mp.qMeasure.qLabelExpression, 'Chart');
+        } catch(e){}
+      }
+    }
+  }
+
   // ===================== UNUSED FIELDS + "USED IN" FINDER =====================
   async function findUnusedFields(app, allFields, dims, msrs, vars){
     const allFieldsSet = new Set((allFields||[]).map(f=>f.name).filter(Boolean));
@@ -479,9 +561,10 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       s.add(cat);
     };
     const markExpr = (expr, cat) => {
-      const s = extractFieldsFromExpr(expr, allFieldsSet);
-      const hasSet = reHasSet.test(expr || '');
-      s.forEach(f => { addUse(f, cat); if (hasSet) addUse(f, 'Set analysis'); });
+      const ex = expandDollar(expr, varMap);
+      const fields = extractFieldsFromExpr(ex, allFieldsSet);
+      const hasSet = reHasSet.test(ex || '');
+      fields.forEach(f => { addUse(f, cat); if (hasSet) addUse(f, 'Set analysis'); });
     };
 
     // Master dimensions (single + drill-down + labels)
@@ -491,49 +574,37 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       const allDimDefs = [...rawList, ...ddList].map(s=>String(s||'').trim()).filter(Boolean);
 
       for (const def of allDimDefs) {
-        if (def.startsWith('=')) {
-          const ex = expandDollar(def, varMap);
-          markExpr(ex, 'Dimension');
-        } else {
+        if (def.startsWith('=')) markExpr(def, 'Dimension');
+        else {
           const base = def.replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
           if (allFieldsSet.has(base)) addUse(base, 'Dimension');
           const ex = /^\[.*\]$/.test(def) ? def : `[${def}]`;
           markExpr(ex, 'Dimension');
         }
       }
-      if (d.labelExpr) {
-        const ex = expandDollar(d.labelExpr, varMap);
-        markExpr(ex, 'Dimension');
-      }
+      if (d.labelExpr) markExpr(d.labelExpr, 'Dimension');
     }
 
     // Master measures
     for (const m of msrs || []) {
-      if (m.expression) {
-        const ex = expandDollar(m.expression, varMap);
-        markExpr(ex, 'Measure');
-      }
-      if (m.labelExpr) {
-        const exl = expandDollar(m.labelExpr, varMap);
-        markExpr(exl, 'Measure');
-      }
+      if (m.expression) markExpr(m.expression, 'Measure');
+      if (m.labelExpr)  markExpr(m.labelExpr, 'Measure');
     }
 
     // Variables
     for (const v of vars || []) {
       if (!v?.definition) continue;
-      const ex = expandDollar(v.definition, varMap);
-      markExpr(ex, 'Variable');
+      markExpr(v.definition, 'Variable');
     }
 
-    // Objects on sheets (incl. listboxes / alternates)
+    // Objects on sheets (incl. alternates)
     const objs = await fetchObjectPropsForSheets(app);
     for (const o of objs) {
       const items = collectObjectExpressions(o.props || {});
-      for (const it of items) {
-        const ex = expandDollar(it.expr, varMap);
-        markExpr(ex, 'Chart');
-      }
+      for (const it of items) markExpr(it.expr, 'Chart');
+
+      // explicit sweep of qLayoutExclude for inline + master alternates
+      await markFieldsFromLayoutExclude(app, o.props || {}, addUse, allFieldsSet, markExpr);
     }
 
     // Map autoCalendar children -> base
@@ -619,18 +690,18 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         const sheetModel = await app.getObject(sh.id);
         let childInfos = [];
         try { childInfos = await sheetModel.getChildInfos(); } catch {}
-        const props = childInfos?.length ? null : await sheetModel.getProperties();
+        const props = childInfos?.length ? null : await sheetModel.getProperties().catch(()=>null);
         const cells = childInfos?.length ? childInfos.map(ci => ({ name: ci.qId })) : (props?.cells || []);
         for (const c of cells) {
           const objId = c.name;
           try {
             const objModel = await app.getObject(objId);
-            const p = await objModel.getProperties();
+            const p = await objModel.getProperties().catch(()=>null);
             charts.push({
               sheetTitle: sh.title, sheetId: sh.id, objectId: objId,
-              type: p.visualization || c.type || '',
-              title: (typeof p.title === 'string' ? p.title : (p.title && p.title.qStringExpression) || ''),
-              isMaster: p.qExtendsId ? 'Y' : 'N', masterId: p.qExtendsId || ''
+              type: p?.visualization || c.type || '',
+              title: (typeof p?.title === 'string' ? p.title : (p?.title && p.title.qStringExpression) || ''),
+              isMaster: p?.qExtendsId ? 'Y' : 'N', masterId: p?.qExtendsId || ''
             });
           } catch(e){}
         }
@@ -768,6 +839,29 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     downloadXml(fileName || 'Qollect_Metadata', xlWorkbook(sheets.join('')));
   }
 
+  // ------- NEW: Export App Script (.qvs) -------
+  async function exportAppScript(app, fileNameBase){
+    let text = null;
+    try {
+      const res = await app.getScript(); // returns string in most envs, or { qScript }
+      text = (res && res.qScript) ? res.qScript : (typeof res === 'string' ? res : '');
+    } catch (e) {
+      console.error('getScript failed:', e);
+      // UPDATED MESSAGE ①
+      alert('Script export unavailable: your user session does not have permission to read the app load script. Use a development copy or ask an administrator to grant Edit + Data Load Editor access.');
+      return;
+    }
+    if (!text) {
+      // UPDATED MESSAGE ②
+      alert('Script export unavailable for this app/user (insufficient permissions or published/embedded context). Use a development copy or request Edit + Data Load Editor access.');
+      return;
+    }
+    // Normalize line endings to CRLF so Notepad shows it nicely; Excel/IDE handle both anyway
+    const normalized = text.replace(/\r?\n/g, '\r\n');
+    const base = (fileNameBase && fileNameBase.trim()) || 'Qollect_App_Script';
+    downloadText(base, normalized); // adds .qvs automatically
+  }
+
   // ------- Extension -------
   return {
     definition: {
@@ -777,7 +871,9 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         settings: {
           uses: 'settings',
           items: {
-            fileName: { type: 'string', label: 'Default file name', ref: 'props.fileName', defaultValue: 'Qollect_Metadata' }
+            fileName: { type: 'string', label: 'Default file name', ref: 'props.fileName', defaultValue: 'Qollect_Metadata' },
+            // Optional: custom script file base name
+            scriptFileName: { type: 'string', label: 'Script file name (base)', ref: 'props.scriptFileName', defaultValue: 'Qollect_App_Script' }
           }
         },
         about: {
@@ -785,7 +881,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer:   { component: 'text', label: 'Version: 1.1.0' },
+            aboutVer:   { component: 'text', label: 'Version: 1.2.0' },
             aboutAuth:  { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
@@ -798,6 +894,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       const app = qlik.currApp(this);
       const id = layout.qInfo.qId;
       const fileName = layout?.props?.fileName || 'Qollect_Metadata';
+      const scriptFileName = layout?.props?.scriptFileName || 'Qollect_App_Script';
 
       $element.html(`
         <div class="qollect__wrap">
@@ -815,12 +912,15 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
 
             <div class="qollect__actions">
               <button id="btn-${id}" class="qollect__btn" type="button">Export Selected (XLS)</button>
+              <button id="btn-script-${id}" class="qollect__btn qollect__btn--secondary" type="button" title="Download the app's load script as a .qvs file">Export App Script (.qvs)</button>
             </div>
           </div>
         </div>
       `);
 
       const $btn = $element.find(`#btn-${id}`);
+      const $btnScript = $element.find(`#btn-script-${id}`);
+
       $btn.off('click').on('click', async () => {
         const overview = $element.find(`#ovw-${id}`).is(':checked');
         const dims = $element.find(`#dims-${id}`).is(':checked');
@@ -833,6 +933,14 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         try { await exportSelected(app, fileName, { overview, dims, msrs, flds, shts, chrs, vars }); }
         catch (err) { console.error(err); alert('Export failed: ' + (err?.message || err)); }
         finally { $btn.prop('disabled', false).text('Export Selected (XLS)'); }
+      });
+
+      // NEW: script button
+      $btnScript.off('click').on('click', async () => {
+        $btnScript.prop('disabled', true).text('Fetching script…');
+        try { await exportAppScript(app, scriptFileName); }
+        catch (err) { console.error(err); alert('Script export failed: ' + (err?.message || err)); }
+        finally { $btnScript.prop('disabled', false).text('Export App Script (.qvs)'); }
       });
 
       return qlik.Promise.resolve();
