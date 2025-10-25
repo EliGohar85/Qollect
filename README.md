@@ -57,7 +57,7 @@ If Qollect saves you time, consider supporting development:
 
 ### 1.2.0
 - Added **Export Script as QVS file** - allows exporting your app’s script directly to a .qvs file for easier reuse and documentation.
-- Fixed **alternative dimensions detection** - alternative dimensions are no longer listed as unused fields.
+- Fixed **alternative dimensions/measures detection** - Qollect now correctly detects and displays whether an alternative dimension or measure was used.
 
 ### 1.1.0
 - Added **App Overview** sheet (first in workbook) summarizing: # of Dimensions, # of Measures, # of Fields, # of Sheets, # of Charts, # of Variables.  
