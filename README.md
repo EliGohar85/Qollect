@@ -55,6 +55,10 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### 1.3.0
+- Added "Items" column to the Charts sheet – showing all associated dimensions, measures, fields, expressions, and alternate items.
+- Added new "Script" sheet - Summarizes key script activity per tab (including LOAD/STORE/JOIN operations, RESIDENT usage, QVD references, and variables).
+
 ### 1.2.0
 - Added **Export Script as QVS file** - allows exporting your app’s script directly to a .qvs file for easier reuse and documentation.
 - Fixed **alternative dimensions/measures detection** - Qollect now correctly detects and displays whether an alternative dimension or measure was used.
