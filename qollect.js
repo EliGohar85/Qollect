@@ -160,6 +160,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
 
     let s = expr.replace(/\/\/.*$/gm, '').replace(reBlockComments, '');
 
+    // bracketed fields [Field], including spaces
     const br = s.match(/\[([^\]\\]|\\.)+\]/g) || [];
     for (const tok of br) {
       const name = tok.slice(1,-1);
@@ -168,6 +169,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       if (allFieldsSet.has(base)) used.add(base);
     }
 
+    // set analysis
     const sa = s.match(/\{\s*<([\s\S]*?)>\s*\}/g) || [];
     for (const block of sa) {
       const inside = block.slice(block.indexOf('<')+1, block.lastIndexOf('>'));
@@ -184,15 +186,19 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       }
     }
 
+    // derived fields autoCalendar
     const ac = s.match(/([A-Za-z_][\w ]*)\.autoCalendar\.[A-Za-z]+/g) || [];
     for (const t of ac) {
       const base = t.replace(/\.autoCalendar\..*$/,'').trim();
       if (allFieldsSet.has(base)) used.add(base);
     }
 
+    // unbracketed field names, including dots (OTIF.Counter etc)
     for (const fname of allFieldsSet) {
-      if (!/^[A-Za-z_]\w*$/.test(fname)) continue;
-      const re = new RegExp(`(?<![\\w$])${fname}(?![\\w$])`);
+      // only simple names, no spaces or weird chars
+      if (!/^[A-Za-z_][\w.]*$/.test(fname)) continue;
+      const escaped = fname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
       if (re.test(s)) used.add(fname);
     }
 
@@ -550,6 +556,28 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     return vars;
   }
 
+  // ------- helper: mark fields from primary dimensions in charts (including spaces) -------
+  function markFieldsFromDimensions(props, addUse, allFieldsSet, markExpr){
+    const hc = props && props.qHyperCubeDef;
+    if (!hc) return;
+    const asArray = v => Array.isArray(v) ? v : (v != null ? [v] : []);
+    for (const d of asArray(hc.qDimensions)) {
+      const qd = d && d.qDef ? d.qDef : null;
+      const defs = qd
+        ? (Array.isArray(qd.qFieldDefs) && qd.qFieldDefs.length ? qd.qFieldDefs
+           : (qd.qFieldDef ? [qd.qFieldDef] : []))
+        : [];
+      for (const f of defs) {
+        const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
+        if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+        if (typeof f === 'string' && f.trim().startsWith('=')) markExpr(f, 'Chart');
+      }
+
+      if (qd?.qLabelExpression) markExpr(qd.qLabelExpression, 'Chart');
+      if (d?.qCalcCond)         markExpr(d.qCalcCond, 'Chart');
+    }
+  }
+
   // ------- helper: mark fields from alt dimensions/measures -------
   async function markFieldsFromLayoutExclude(app, props, addUse, allFieldsSet, markExpr){
     const ex = (props && props.qLayoutExclude && props.qLayoutExclude.qHyperCubeDef)
@@ -627,6 +655,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       fields.forEach(f => { addUse(f, cat); if (hasSet) addUse(f, 'Set analysis'); });
     };
 
+    // master dimensions
     for (const d of dims || []) {
       const rawList = Array.isArray(d.fieldsArray) ? d.fieldsArray : (typeof d.fields === 'string' ? d.fields.split(',') : []);
       const ddList  = Array.isArray(d.drillDownFieldsArray) ? d.drillDownFieldsArray : [];
@@ -644,23 +673,32 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       if (d.labelExpr) markExpr(d.labelExpr, 'Dimension');
     }
 
+    // master measures
     for (const m of msrs || []) {
       if (m.expression) markExpr(m.expression, 'Measure');
       if (m.labelExpr)  markExpr(m.labelExpr, 'Measure');
     }
 
+    // variables
     for (const v of vars || []) {
       if (!v?.definition) continue;
       markExpr(v.definition, 'Variable');
     }
 
+    // charts and alt dimensions/measures
     const objs = await fetchObjectPropsForSheets(app);
     for (const o of objs) {
-      const items = collectObjectExpressions(o.props || {});
+      const props = o.props || {};
+      const items = collectObjectExpressions(props);
       for (const it of items) markExpr(it.expr, 'Chart');
-      await markFieldsFromLayoutExclude(app, o.props || {}, addUse, allFieldsSet, markExpr);
+
+      // NEW: explicitly mark fields used as primary chart dimensions (handles [Eli Gohar] etc)
+      markFieldsFromDimensions(props, addUse, allFieldsSet, markExpr);
+
+      await markFieldsFromLayoutExclude(app, props, addUse, allFieldsSet, markExpr);
     }
 
+    // derived base fields
     for (const f of allFieldsSet) {
       if (f.includes('.autoCalendar.')) {
         const base = f.replace(/\.autoCalendar\..*$/,'');
@@ -1005,73 +1043,72 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
   }
 
   // ---- Script parser (counts + QVDs + variables, per tab)
-function parseScriptMetadata(scriptText){
-  const rows = [];
+  function parseScriptMetadata(scriptText){
+    const rows = [];
 
-  const withoutBlocks = String(scriptText || '').replace(/\/\*[\s\S]*?\*\//g, '');
-  const lines = withoutBlocks.replace(/\r\n/g, '\n').split('\n');
+    const withoutBlocks = String(scriptText || '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const lines = withoutBlocks.replace(/\r\n/g, '\n').split('\n');
 
-  let current = null; // lazy init
+    let current = null; // lazy init
 
-  const makeRow = (tabName) => ({
-    tab: (tabName && tabName.trim()) || 'Main',
-    loads: 0, stores: 0, joins: 0, residents: 0,
-    qvds: new Set(), vars: new Set()
-  });
+    const makeRow = (tabName) => ({
+      tab: (tabName && tabName.trim()) || 'Main',
+      loads: 0, stores: 0, joins: 0, residents: 0,
+      qvds: new Set(), vars: new Set()
+    });
 
-  const flush = () => {
-    if (!current) return;
-    if (
-      current.loads || current.stores || current.joins || current.residents ||
-      (current.vars && current.vars.size) || (current.qvds && current.qvds.size)
-    ) {
-      rows.push({
-        tab: current.tab,
-        loads: current.loads, stores: current.stores,
-        joins: current.joins, residents: current.residents,
-        qvds: Array.from(current.qvds),
-        vars: Array.from(current.vars)
-      });
+    const flush = () => {
+      if (!current) return;
+      if (
+        current.loads || current.stores || current.joins || current.residents ||
+        (current.vars && current.vars.size) || (current.qvds && current.qvds.size)
+      ) {
+        rows.push({
+          tab: current.tab,
+          loads: current.loads, stores: current.stores,
+          joins: current.joins, residents: current.residents,
+          qvds: Array.from(current.qvds),
+          vars: Array.from(current.vars)
+        });
+      }
+      current = null;
+    };
+
+    for (const raw of lines) {
+      const trimmed = (raw || '').trim();
+
+      // tab markers (///$tab or // $tab)
+      const tabMatch =
+        trimmed.match(/^\/\/\/\s*\$tab\s*(.*)$/i) ||
+        trimmed.match(/^\/\/\s*\$tab\s*(.*)$/i);
+      if (tabMatch) {
+        flush();
+        current = makeRow(tabMatch[1] || 'Untitled');
+        continue;
+      }
+
+      // comment-stripped line for keyword counts
+      const line = (raw || '').replace(/\/\/.*$/,'').trim();
+      if (!line) continue;
+      if (!current) current = makeRow('Main');
+
+      if (/\bLOAD\b/i.test(line))     current.loads++;
+      if (/\bSTORE\b/i.test(line))    current.stores++;
+      if (/\bJOIN\b/i.test(line))     current.joins++;
+      if (/\bRESIDENT\b/i.test(line)) current.residents++;
+
+      // QVDs (use raw to keep [ ... ] intact)
+      const qvds = extractQvdsFromLine(raw || '');
+      qvds.forEach(q => current.qvds.add(q));
+
+      // variables
+      const vm = line.match(/^\s*(SET|LET)\s+([A-Za-z_]\w*)\s*=/i);
+      if (vm && vm[2]) current.vars.add(vm[2]);
     }
-    current = null;
-  };
 
-  for (const raw of lines) {
-    const trimmed = (raw || '').trim();
-
-    // tab markers (///$tab or // $tab)
-    const tabMatch =
-      trimmed.match(/^\/\/\/\s*\$tab\s*(.*)$/i) ||
-      trimmed.match(/^\/\/\s*\$tab\s*(.*)$/i);
-    if (tabMatch) {
-      flush();
-      current = makeRow(tabMatch[1] || 'Untitled');
-      continue;
-    }
-
-    // comment-stripped line for keyword counts
-    const line = (raw || '').replace(/\/\/.*$/,'').trim();
-    if (!line) continue;
-    if (!current) current = makeRow('Main');
-
-    if (/\bLOAD\b/i.test(line))     current.loads++;
-    if (/\bSTORE\b/i.test(line))    current.stores++;
-    if (/\bJOIN\b/i.test(line))     current.joins++;
-    if (/\bRESIDENT\b/i.test(line)) current.residents++;
-
-    // QVDs (use raw to keep [ ... ] intact)
-    const qvds = extractQvdsFromLine(raw || '');
-    qvds.forEach(q => current.qvds.add(q));
-
-    // variables
-    const vm = line.match(/^\s*(SET|LET)\s+([A-Za-z_]\w*)\s*=/i);
-    if (vm && vm[2]) current.vars.add(vm[2]);
+    flush();
+    return rows;
   }
-
-  flush();
-  return rows;
-}
-
 
   // ------- Charts fetcher (warm caches so alternates use NAMES) -------
   async function fetchChartsViaEngine(app){
@@ -1245,7 +1282,7 @@ function parseScriptMetadata(scriptText){
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer:   { component: 'text', label: 'Version: 1.3.0' },
+            aboutVer:   { component: 'text', label: 'Version: 1.3.1' },
             aboutAuth:  { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
