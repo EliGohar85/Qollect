@@ -55,6 +55,11 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### 1.3.1
+- Fixed detection of field names with spaces (like [Total Sales])
+- Fixed detection of unbracketed dotted fields (like Orders.Total)
+- Improved overall field parsing logic
+
 ### 1.3.0
 - Added **"Items"** column to the Charts sheet - showing all associated dimensions, measures, fields, expressions, and alternate items.
 - Added new **"Script" sheet** - Summarizes key script activity per tab (including LOAD/STORE/JOIN operations, RESIDENT usage, QVD references, and variables).
