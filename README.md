@@ -55,6 +55,11 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### 1.3.2
+- Fixed Fields tagged as $key are now always reported as USED and marked as Key
+- Added Full support for Container objects, including nested charts and their dimensions and measures
+- Improved Field usage detection for charts inside containers
+
 ### 1.3.1
 - Fixed detection of field names with spaces (like [Total Sales])
 - Fixed detection of unbracketed dotted fields (like Orders.Total)
