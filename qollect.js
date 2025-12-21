@@ -641,6 +641,17 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     const used = new Set();
     const usedInMap = new Map();
 
+    // FIX: Key fields are identified by "$key" in Tags and must always be USED with "Used In" = Key
+    const keyFields = new Set(
+      (allFields || [])
+        .filter(f => {
+          const t = String(f?.tags || '').toLowerCase();
+          return /\$key\b/.test(t);
+        })
+        .map(f => f.name)
+        .filter(Boolean)
+    );
+
     const addUse = (fname, cat) => {
       if (!fname) return;
       used.add(fname);
@@ -648,6 +659,10 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       if (!s) { s = new Set(); usedInMap.set(fname, s); }
       s.add(cat);
     };
+
+    // mark key fields first
+    for (const k of keyFields) addUse(k, 'Key');
+
     const markExpr = (expr, cat) => {
       const ex = expandDollar(expr, varMap);
       const fields = extractFieldsFromExpr(ex, allFieldsSet);
@@ -692,7 +707,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       const items = collectObjectExpressions(props);
       for (const it of items) markExpr(it.expr, 'Chart');
 
-      // NEW: explicitly mark fields used as primary chart dimensions (handles [Eli Gohar] etc)
+      // explicitly mark fields used as primary chart dimensions (handles [Field With Spaces])
       markFieldsFromDimensions(props, addUse, allFieldsSet, markExpr);
 
       await markFieldsFromLayoutExclude(app, props, addUse, allFieldsSet, markExpr);
@@ -709,9 +724,10 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     const unused = new Set();
     for (const f of allFieldsSet) {
       if (f.includes('.autoCalendar.')) continue;
+      if (keyFields.has(f)) continue; // FIX: Key fields are never UNUSED
       if (!used.has(f)) unused.add(f);
     }
-    return { used, unused, usedInMap };
+    return { used, unused, usedInMap, keyFields };
   }
 
   // ------- Master item caches & resolvers (to get TITLES, not IDs) -------
@@ -834,10 +850,10 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
 
     const sections = [];
     const pushSection = (title, lines) => {
-      if (!lines.length) return;
-      if (sections.length) sections.push(''); // blank line between groups
-      sections.push(`${title}`);
-      sections.push(...lines.map(s => `   ${s}`)); // subtle indent
+	  if (!lines.length) return;
+	  // removed the blank line between groups
+	  sections.push(`${title}`);
+	  sections.push(...lines.map(s => `   ${s}`));
     };
 
     // ---- Dimensions (primary)
@@ -915,6 +931,178 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     return sections.join('\r\n');
   }
 
+  // ===================== NEW: Container support (Charts sheet Items column) =====================
+  function safeTitleFromProps(p){
+    if (!p) return '';
+    if (typeof p.title === 'string') return p.title;
+    if (p.title && typeof p.title.qStringExpression === 'string') return p.title.qStringExpression;
+    if (p.qMetaDef && typeof p.qMetaDef.title === 'string') return p.qMetaDef.title;
+    return '';
+  }
+
+  // ---- NEW: friendly fallback names for container children ----
+  function isGuidLike(s){
+    const t = String(s || '').trim();
+    if (!t) return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+  }
+
+  function prettyVisName(vis){
+    const v = String(vis || '').trim().toLowerCase();
+    const map = {
+      barchart: 'Bar chart',
+      linechart: 'Line chart',
+      combochart: 'Combo chart',
+      piechart: 'Pie chart',
+      table: 'Table',
+      pivot: 'Pivot table',
+      pivotchart: 'Pivot table',
+      kpi: 'KPI',
+      filterpane: 'Filter pane',
+      listbox: 'List box',
+      treemap: 'Treemap',
+      map: 'Map',
+      scatterplot: 'Scatter plot',
+      distributionplot: 'Distribution plot',
+      boxplot: 'Box plot',
+      gauge: 'Gauge',
+      textimage: 'Text and image',
+      container: 'Container'
+    };
+    if (map[v]) return map[v];
+
+    const cleaned = v
+      .replace(/[_-]+/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .trim();
+    if (!cleaned) return 'Chart';
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  function containerChildDisplayTitle(rawTitle, childType, childId){
+    const t = String(rawTitle || '').trim();
+    const hasRealTitle = t && t !== String(childId || '').trim() && !isGuidLike(t);
+    if (hasRealTitle) return { text: t, isFallback: false };
+    return { text: `Container > ${prettyVisName(childType)}`, isFallback: true };
+  }
+
+  function extractContainerChildTitleMap(layout){
+    const map = new Map(); // childId -> { title, type }
+    const items =
+      layout?.qChildList?.qItems ||
+      layout?.qChildListObject?.qItems ||
+      layout?.qChildren?.qItems ||
+      [];
+    if (!Array.isArray(items)) return map;
+
+    for (const it of items) {
+      const id =
+        it?.qInfo?.qId ||
+        it?.qId ||
+        it?.id ||
+        it?.qIdentifier ||
+        '';
+      if (!id) continue;
+
+      const title =
+        it?.qMeta?.title ||
+        it?.qMeta?.name ||
+        it?.qData?.title ||
+        it?.title ||
+        '';
+
+      const type =
+        it?.qData?.visualization ||
+        it?.qData?.type ||
+        it?.qType ||
+        it?.type ||
+        '';
+
+      map.set(id, { title, type });
+    }
+    return map;
+  }
+
+  function dedupeStrings(arr){
+    const out = [];
+    const seen = new Set();
+    for (const v of arr || []) {
+      const s = String(v || '').trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    return out;
+  }
+
+  async function buildContainerItemsSummary(app, containerModel, containerProps, containerLayout, depth = 0){
+    if (depth > 3) return ''; // prevent infinite recursion
+
+    // 1) collect child ids from getChildInfos
+    let kids = [];
+    try { kids = await containerModel.getChildInfos(); } catch {}
+
+    const idsFromChildInfos = Array.isArray(kids)
+      ? kids.map(k => k?.qId || k?.id || k?.Id || '').filter(Boolean)
+      : [];
+
+    // 2) collect child ids and titles from layout child list
+    const titleMap = extractContainerChildTitleMap(containerLayout);
+    const idsFromLayout = Array.from(titleMap.keys());
+
+    const childIds = dedupeStrings([...idsFromChildInfos, ...idsFromLayout]);
+    if (!childIds.length) return '';
+
+    const lines = [];
+    lines.push(`Container items (${childIds.length})`);
+
+    for (const cid of childIds) {
+      try {
+        const childModel = await app.getObject(cid);
+        const [cp, cl] = await Promise.all([
+          childModel.getProperties().catch(()=>null),
+          childModel.getLayout().catch(()=>null)
+        ]);
+
+        const mapInfo = titleMap.get(cid) || {};
+        const cType = cp?.visualization || cl?.visualization || mapInfo.type || '';
+
+        const rawTitle =
+          safeTitleFromProps(cp) ||
+          cl?.qMeta?.title ||
+          mapInfo.title ||
+          '';
+
+        const disp = containerChildDisplayTitle(rawTitle, cType, cid);
+
+        // Normal charts: buildItemsSummary
+        let childSummary = cp ? await buildItemsSummary(app, cp, cl) : '';
+
+        // If the child itself is a container, recurse
+        if ((!childSummary || !childSummary.trim()) && String(cType).toLowerCase() === 'container') {
+          childSummary = await buildContainerItemsSummary(app, childModel, cp, cl, depth + 1);
+        }
+
+        // If it's a friendly fallback, don't add "(type)" again
+        const headerLine = disp.isFallback
+          ? `• ${disp.text}`
+          : `• ${disp.text}${cType ? ` (${cType})` : ''}`;
+
+        lines.push(headerLine);
+
+        if (childSummary && childSummary.trim()) {
+          const indented = childSummary
+            .split(/\r?\n/)
+            .map(x => `   ${x}`)
+            .join('\r\n');
+          lines.push(indented);
+        }
+      } catch(e){}
+    }
+
+    return lines.join('\r\n');
+  }
+
   // ------- Sheet builders -------
   const buildOverviewSheet = (info) => {
     const headers = [
@@ -942,7 +1130,8 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
   };
   const buildFldSheet = (flds, unusedSet, usedInMap) => {
     const headers = ['Field','Source Tables','Tags','Usage','Used In'];
-    const order = ['Chart','Set analysis','Dimension','Measure','Variable'];
+    // FIX: include "Key" and sort it first
+    const order = ['Key','Chart','Set analysis','Dimension','Measure','Variable'];
     const fmtUsedIn = name => {
       const s = usedInMap && usedInMap.get(name);
       if (!s || !s.size) return '';
@@ -1130,7 +1319,14 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
             const p = await objModel.getProperties().catch(()=>null);
             const l = await objModel.getLayout().catch(()=>null);
 
-            const itemsSummary = p ? await buildItemsSummary(app, p, l) : '';
+            const visType = (p?.visualization || c.type || l?.visualization || '').toLowerCase();
+            let itemsSummary = p ? await buildItemsSummary(app, p, l) : '';
+
+            // NEW: Container objects should list their children charts (tabs) and each child's dims/measures
+            if (visType === 'container') {
+              const containerSummary = await buildContainerItemsSummary(app, objModel, p, l);
+              if (containerSummary && containerSummary.trim()) itemsSummary = containerSummary;
+            }
 
             charts.push({
               sheetTitle: sh.title, sheetId: sh.id, objectId: objId,
@@ -1282,7 +1478,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer:   { component: 'text', label: 'Version: 1.3.1' },
+            aboutVer:   { component: 'text', label: 'Version: 1.3.2' },
             aboutAuth:  { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
