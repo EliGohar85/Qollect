@@ -55,6 +55,10 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### v1.3.3
+- **Added support for Box Plot charts:** fields used by box plot visuals are now correctly detected and marked as **USED**, and the **Items** column is no longer empty for this chart type.
+- **Fixed Chart Items output:** the **Items** column now shows both the **actual field name** and the **UI label** for non-master dimensions and measures, instead of only the label.
+
 ### 1.3.2
 - Fixed fields tagged as $key are now always reported as USED and marked as Key
 - Added full support for Container objects, including nested charts and their dimensions and measures
