@@ -569,8 +569,11 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         : [];
       for (const f of defs) {
         const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
-        if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
-        if (typeof f === 'string' && f.trim().startsWith('=')) markExpr(f, 'Chart');
+        if (typeof f === 'string' && f.trim().startsWith('=')) {
+          markExpr(f, 'Chart');
+        } else {
+          if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+        }
       }
 
       if (qd?.qLabelExpression) markExpr(qd.qLabelExpression, 'Chart');
@@ -596,8 +599,11 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         : [];
       for (const f of defs) {
         const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
-        if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
-        if (typeof f === 'string' && f.trim().startsWith('=')) markExpr(f, 'Chart');
+        if (typeof f === 'string' && f.trim().startsWith('=')) {
+          markExpr(f, 'Chart');
+        } else {
+          if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+        }
       }
 
       if (d && typeof d.qLibraryId === 'string' && d.qLibraryId.trim()) {
@@ -609,6 +615,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           for (const f of [...arr, ...dd]) {
             const name = String(f||'').replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
             if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, 'Chart');
+            if (typeof f === 'string' && f.trim().startsWith('=')) markExpr(f, 'Chart');
           }
           if (dp?.qDim?.qLabelExpression) markExpr(dp.qDim.qLabelExpression, 'Chart');
         } catch(e){}
@@ -632,6 +639,72 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         } catch(e){}
       }
     }
+  }
+
+  // ===================== FIX #2: ensure nested qHyperCubeDef (e.g. qProp.boxplotDef.qHyperCubeDef) is marked =====================
+  function markFieldsFromHyperCubeDef(hc, addUse, allFieldsSet, markExpr, cat){
+    if (!hc) return;
+    const asArray = v => Array.isArray(v) ? v : (v != null ? [v] : []);
+
+    // Dimensions
+    for (const d of asArray(hc.qDimensions)) {
+      const qd = d && d.qDef ? d.qDef : null;
+      const defs = qd
+        ? (Array.isArray(qd.qFieldDefs) && qd.qFieldDefs.length ? qd.qFieldDefs
+           : (qd.qFieldDef ? [qd.qFieldDef] : []))
+        : [];
+      for (const f of defs) {
+        const raw = String(f || '').trim();
+        if (!raw) continue;
+        if (raw.startsWith('=')) {
+          markExpr(raw, cat);
+        } else {
+          const name = raw.replace(/^\[|\]$/g,'').replace(/\.autoCalendar\..*$/,'');
+          if (name && (!allFieldsSet || allFieldsSet.has(name))) addUse(name, cat);
+        }
+      }
+      if (qd?.qLabelExpression) markExpr(qd.qLabelExpression, cat);
+      if (d?.qCalcCond)         markExpr(d.qCalcCond, cat);
+    }
+
+    // Measures (extra safety)
+    for (const m of asArray(hc.qMeasures)) {
+      if (m?.qDef?.qDef) markExpr(m.qDef.qDef, cat);
+      if (m?.qDef?.qLabelExpression) markExpr(m.qDef.qLabelExpression, cat);
+      if (m?.qSortByExpression?.qExpression) markExpr(m.qSortByExpression.qExpression, cat);
+    }
+
+    if (hc.qCalcCond) markExpr(hc.qCalcCond, cat);
+  }
+
+  async function markFieldsFromAllHypercubes(app, props, addUse, allFieldsSet, markExpr){
+    const seen = new WeakSet();
+    const MAX_DEPTH = 60;
+
+    async function walk(node, depth){
+      if (!node || depth > MAX_DEPTH) return;
+      if (typeof node !== 'object') return;
+      if (seen.has(node)) return;
+      seen.add(node);
+
+      // primary hypercube in any nested location (boxplotDef, qProp, etc)
+      if (node.qHyperCubeDef) {
+        markFieldsFromHyperCubeDef(node.qHyperCubeDef, addUse, allFieldsSet, markExpr, 'Chart');
+      }
+
+      // alternates in any nested location
+      await markFieldsFromLayoutExclude(app, node, addUse, allFieldsSet, markExpr);
+
+      if (Array.isArray(node)) {
+        for (const v of node) await walk(v, depth + 1);
+      } else {
+        for (const v of Object.values(node)) {
+          if (v && typeof v === 'object') await walk(v, depth + 1);
+        }
+      }
+    }
+
+    await walk(props, 0);
   }
 
   // ===================== UNUSED FIELDS + "USED IN" FINDER =====================
@@ -707,9 +780,11 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       const items = collectObjectExpressions(props);
       for (const it of items) markExpr(it.expr, 'Chart');
 
-      // explicitly mark fields used as primary chart dimensions (handles [Field With Spaces])
-      markFieldsFromDimensions(props, addUse, allFieldsSet, markExpr);
+      // FIX #2: mark fields from ALL nested hypercubes (including qProp.boxplotDef.qHyperCubeDef)
+      await markFieldsFromAllHypercubes(app, props, addUse, allFieldsSet, markExpr);
 
+      // keep the existing behavior too (no harm, helps some edge props that only expose root qHyperCubeDef)
+      markFieldsFromDimensions(props, addUse, allFieldsSet, markExpr);
       await markFieldsFromLayoutExclude(app, props, addUse, allFieldsSet, markExpr);
     }
 
@@ -824,7 +899,104 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
 
   const fmtMaster = nameOrId => `[Master Item: ${String(nameOrId || '(no title)').trim()}]`;
   const fmtField  = name => `[Field: ${String(name||'').trim()}]`;
+
+  // NEW: keep UI label but also preserve the real field defs (for non-master dimensions)
+  const fmtFieldWithLabel = (fieldText, labelText) => {
+    const f = String(fieldText || '').trim();
+    const l = String(labelText || '').trim();
+    if (!l || !f) return `[Field: ${f || l}]`;
+    if (l === f) return `[Field: ${f}]`;
+    return `[Field: ${f}, Label: ${l}]`;
+  };
+
   const fmtExpr   = expr => `[Expression: ${trunc(expr)}]`;
+
+  // NEW: keep measure expression + label (for non-master measures)
+  const fmtExprWithLabel = (exprText, labelText) => {
+    const e = String(exprText || '').trim();
+    const l = String(labelText || '').trim();
+    if (!l) return `[Expression: ${trunc(e)}]`;
+    return `[Expression: ${trunc(e)}, Label: ${l}]`;
+  };
+
+  // FIX: boxplot (and other viz) hypercube can be nested (qProp.boxplotDef.qHyperCubeDef etc)
+  function findFirstNestedHyperCubeDef(root){
+    const seen = new WeakSet();
+    const MAX_DEPTH = 60;
+
+    const hasContent = hc =>
+      !!hc && (Array.isArray(hc.qDimensions) && hc.qDimensions.length || Array.isArray(hc.qMeasures) && hc.qMeasures.length);
+
+    function walk(node, depth){
+      if (!node || depth > MAX_DEPTH) return null;
+      if (typeof node !== 'object') return null;
+      if (seen.has(node)) return null;
+      seen.add(node);
+
+      if (node.qHyperCubeDef) {
+        // prefer one with dims/measures
+        if (hasContent(node.qHyperCubeDef)) return node.qHyperCubeDef;
+        // keep as candidate but continue searching for a better one
+        const candidate = node.qHyperCubeDef;
+        if (Array.isArray(node)) {
+          for (const v of node) {
+            const hit = walk(v, depth + 1);
+            if (hit) return hit;
+          }
+        } else {
+          for (const v of Object.values(node)) {
+            const hit = walk(v, depth + 1);
+            if (hit) return hit;
+          }
+        }
+        return candidate;
+      }
+
+      if (Array.isArray(node)) {
+        for (const v of node) {
+          const hit = walk(v, depth + 1);
+          if (hit) return hit;
+        }
+      } else {
+        for (const v of Object.values(node)) {
+          const hit = walk(v, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    }
+
+    return walk(root, 0);
+  }
+
+  function findFirstNestedLayoutHyperCube(layout){
+    const seen = new WeakSet();
+    const MAX_DEPTH = 60;
+
+    function walk(node, depth){
+      if (!node || depth > MAX_DEPTH) return null;
+      if (typeof node !== 'object') return null;
+      if (seen.has(node)) return null;
+      seen.add(node);
+
+      if (node.qHyperCube) return node.qHyperCube;
+
+      if (Array.isArray(node)) {
+        for (const v of node) {
+          const hit = walk(v, depth + 1);
+          if (hit) return hit;
+        }
+      } else {
+        for (const v of Object.values(node)) {
+          const hit = walk(v, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    }
+
+    return walk(layout, 0);
+  }
 
   async function buildItemsSummary(app, props, layout){
     // merge with master object if extends
@@ -837,23 +1009,35 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       }catch(e){}
     }
 
-    const hc = baseProps.qHyperCubeDef || {};
+    // FIX: prefer root hypercube, but fall back to nested hypercube for boxplot and similar
+    let hc = baseProps.qHyperCubeDef || null;
+    const hcHasContent = h =>
+      !!h && ((Array.isArray(h.qDimensions) && h.qDimensions.length) || (Array.isArray(h.qMeasures) && h.qMeasures.length));
+    if (!hcHasContent(hc)) {
+      const nested = findFirstNestedHyperCubeDef(baseProps);
+      if (nested) hc = nested;
+    }
+    hc = hc || {};
+
     const pAlt = extractAltBlocks(baseProps);
     const lAlt = extractAltBlocks(layout);
     const alt  = dedupeByKey([...(pAlt.dims||[]), ...(lAlt.dims||[])]);
     const altMs= dedupeByKey([...(pAlt.msrs||[]), ...(lAlt.msrs||[])]);
 
-    const dimInfos = (layout && layout.qHyperCube && Array.isArray(layout.qHyperCube.qDimensionInfo))
-      ? layout.qHyperCube.qDimensionInfo : [];
-    const msrInfos = (layout && layout.qHyperCube && Array.isArray(layout.qHyperCube.qMeasureInfo))
-      ? layout.qHyperCube.qMeasureInfo : [];
+    // FIX: layout hypercube info can also be nested, not only layout.qHyperCube
+    const layoutHC = layout?.qHyperCube || findFirstNestedLayoutHyperCube(layout) || null;
+
+    const dimInfos = (layoutHC && Array.isArray(layoutHC.qDimensionInfo))
+      ? layoutHC.qDimensionInfo : [];
+    const msrInfos = (layoutHC && Array.isArray(layoutHC.qMeasureInfo))
+      ? layoutHC.qMeasureInfo : [];
 
     const sections = [];
     const pushSection = (title, lines) => {
-	  if (!lines.length) return;
-	  // removed the blank line between groups
-	  sections.push(`${title}`);
-	  sections.push(...lines.map(s => `   ${s}`));
+      if (!lines.length) return;
+      // removed the blank line between groups
+      sections.push(`${title}`);
+      sections.push(...lines.map(s => `   ${s}`));
     };
 
     // ---- Dimensions (primary)
@@ -870,8 +1054,11 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           const defs = Array.isArray(d?.qDef?.qFieldDefs) && d.qDef.qFieldDefs.length
             ? d.qDef.qFieldDefs
             : (d?.qDef?.qFieldDef ? [d.qDef.qFieldDef] : []);
-          const txt = visName || defs.map(x=>String(x||'').replace(/^\[|\]$/g,'')).filter(Boolean).join('→') || 'Field';
-          dimLines.push(`• ${fmtField(txt)}`);
+
+          const fieldText =
+            defs.map(x=>String(x||'').replace(/^\[|\]$/g,'')).filter(Boolean).join('→') || 'Field';
+
+          dimLines.push(`• ${fmtFieldWithLabel(fieldText, visName)}`);
         }
       }
     }
@@ -888,7 +1075,8 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           msrLines.push(`• ${fmtMaster(name)}`);
         } else {
           const expr = m?.qDef?.qDef || '';
-          msrLines.push(`• ${fmtExpr(expr)}`);
+          const label = (m?.qDef?.qLabel || visName || '').trim();
+          msrLines.push(`• ${fmtExprWithLabel(expr, label)}`);
         }
       }
     }
@@ -904,8 +1092,9 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         const defs = Array.isArray(d?.qDef?.qFieldDefs) && d.qDef.qFieldDefs.length
           ? d.qDef.qFieldDefs
           : (d?.qDef?.qFieldDef ? [d.qDef.qFieldDef] : []);
-        const txt = defs.map(x=>String(x||'').replace(/^\[|\]$/g,'')).filter(Boolean).join('→') || 'Field';
-        altDimLines.push(`• Alt: ${fmtField(txt)}`);
+        const fieldText = defs.map(x=>String(x||'').replace(/^\[|\]$/g,'')).filter(Boolean).join('→') || 'Field';
+        const label = (d?.qDef?.qLabel || d?.qDef?.qFallbackTitle || '').trim();
+        altDimLines.push(`• Alt: ${fmtFieldWithLabel(fieldText, label)}`);
       }
     }
 
@@ -918,7 +1107,8 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
         altMsrLines.push(`• Alt: ${fmtMaster(name)}`);
       } else {
         const expr = m?.qDef?.qDef || '';
-        altMsrLines.push(`• Alt: ${fmtExpr(expr)}`);
+        const label = (m?.qDef?.qLabel || '').trim();
+        altMsrLines.push(`• Alt: ${fmtExprWithLabel(expr, label)}`);
       }
     }
 
@@ -927,7 +1117,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     if (altDimLines.length) pushSection(`Alternate Dimensions (${altDimLines.length})`, altDimLines);
     if (altMsrLines.length) pushSection(`Alternate Measures (${altMsrLines.length})`, altMsrLines);
 
-    // Windows CRLF; cell() converts to &#10; and wraps
+    // If still empty, return empty string (caller can decide)
     return sections.join('\r\n');
   }
 
@@ -1478,7 +1668,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer:   { component: 'text', label: 'Version: 1.3.2' },
+            aboutVer:   { component: 'text', label: 'Version: 1.3.3' },
             aboutAuth:  { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
