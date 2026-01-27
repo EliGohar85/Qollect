@@ -1,5 +1,14 @@
-define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) {
+define(['qlik', 'jquery', 'text!./qollect.css', './exceljs.min'], function (qlik, $, cssContent, ExcelJS) {
   'use strict';
+
+// ------- shared export flags (used by XLSX) -------
+const AUTO_FILTERS = true;
+const FREEZE_HEADER = true;
+const AUTO_WIDTHS = true;
+
+
+  // ExcelJS AMD/module fallback
+  ExcelJS = ExcelJS || (window && window.ExcelJS);
 
   // ------- load external CSS (no inline styles) -------
   (function ensureStyle() {
@@ -11,105 +20,10 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     }
   })();
 
-  // ------- SpreadsheetML helpers -------
-  const xmlEscape = s => String(s ?? '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&apos;');
-
-  // Detect line breaks, convert to &#10; and apply Wrap style on the cell
-  const cell = v => {
-    const isNum = typeof v === 'number' && isFinite(v);
-    const raw = String(v ?? '');
-    const hasBreak = /[\r\n]/.test(raw);
-    const text = xmlEscape(raw).replace(/\r?\n/g, '&#10;'); // Excel line breaks
-    const styleAttr = hasBreak ? ' ss:StyleID="sWrapTop"' : '';
-    return `<Cell${styleAttr}><Data ss:Type="${isNum ? 'Number' : 'String'}">${text}</Data></Cell>`;
-  };
-
-  const row  = cells => `<Row>${cells.join('')}</Row>`;
-  const rowStyled = (cells, styleId) => `<Row${styleId ? ` ss:StyleID="${styleId}"` : ''}>${cells.join('')}</Row>`;
-  const xlHeaderRow = headers =>
-    `<Row>${headers.map(h=>`<Cell ss:StyleID="sHeader"><Data ss:Type="String">${xmlEscape(h)}</Data></Cell>`).join('')}</Row>`;
-
-  const AUTO_FILTERS = true, FREEZE_HEADER = true, AUTO_WIDTHS = true;
-
-  function estimateColumnWidths(headers, matrix){
-    const PX_PER_CHAR = 7, PADDING = 16, MIN_W = 80, MAX_W = 600;
-    const cols = headers.length;
-    const maxLens = Array.from({length: cols}, (_, i) => String(headers[i] ?? '').length);
-    for (const r of matrix) for (let c=0;c<cols;c++){
-      const len = String(r[c] ?? '').replace(/\r?\n/g,'').length; // ignore line breaks for width
-      if (len > maxLens[c]) maxLens[c] = len;
-    }
-    return maxLens.map(len => Math.max(MIN_W, Math.min(MAX_W, len * PX_PER_CHAR + PADDING)));
-  }
-
-  function worksheetWithFeatures(name, headers, matrix, opts = {}){
-    const colsCount = headers.length, rowsCount = matrix.length + 1;
-
-    let columnsXml = '';
-    // explicit per-sheet widths take precedence
-    if (Array.isArray(opts.widths) && opts.widths.length) {
-      columnsXml = opts.widths
-        .slice(0, colsCount)
-        .map((w, idx) => `<Column ss:Index="${idx+1}" ss:Width="${Math.max(20, Number(w)||0)}"/>`)
-        .join('');
-    } else if (AUTO_WIDTHS) {
-      const widths = estimateColumnWidths(headers, matrix);
-      columnsXml = widths.map((w, idx) => `<Column ss:Index="${idx+1}" ss:Width="${w}"/>`).join('');
-    }
-
-    const headerXml = xlHeaderRow(headers);
-    const dataXml = matrix.map(r => {
-      const styledId = typeof opts.rowStyleId === 'function' ? (opts.rowStyleId(r) || null) : null;
-      const cells = r.map(cell);
-      return styledId ? rowStyled(cells, styledId) : row(cells);
-    }).join('');
-
-    const filterXml = AUTO_FILTERS ? `<AutoFilter x:Range="R1C1:R${rowsCount}C${colsCount}" xmlns:x="urn:schemas-microsoft-com:office:excel"/>` : '';
-    const freezeXml = FREEZE_HEADER ? `<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-      <FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal>
-      <TopRowBottomPane>1</TopRowBottomPane><ActivePane>2</ActivePane>
-    </WorksheetOptions>` : '';
-
-    return `<Worksheet ss:Name="${xmlEscape(name)}"><Table>${columnsXml}${headerXml}${dataXml}</Table>${filterXml}${freezeXml}</Worksheet>`;
-  }
-
-  const xlWorkbook = body => `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
- <Styles>
-  <Style ss:ID="sHeader"><Font ss:Bold="1"/><Interior ss:Color="#D9E1F2" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
-  <Style ss:ID="sUnused"><Interior ss:Color="#FCE4E4" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="sWrapTop"><Alignment ss:Vertical="Top" ss:WrapText="1"/></Style>
- </Styles>
- ${body}
-</Workbook>`;
-
-  function downloadXml(filename, xmlString){
-    try{
-      const blob = new Blob([xmlString], { type: 'application/vnd.ms-excel' });
-      const url = (window.URL||window.webkitURL).createObjectURL(blob);
-      const a = document.createElement('a'); a.href=url;
-      a.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
-      document.body.appendChild(a); a.click();
-      setTimeout(()=>{ document.body.removeChild(a); (window.URL||window.webkitURL).revokeObjectURL(url); },0);
-    }catch{
-      const data = 'data:application/vnd.ms-excel;charset=utf-8,' + encodeURIComponent(xmlString);
-      const a = document.createElement('a'); a.href=data;
-      a.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
-      document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),0);
-    }
-  }
 
   // ------- NEW: plain text downloader (for .qvs) -------
   function downloadText(filename, text){
     const name = filename && filename.trim() ? filename : 'script';
-    theBlob:
     try{
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const url = (window.URL||window.webkitURL).createObjectURL(blob);
@@ -122,6 +36,149 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       const a = document.createElement('a'); a.href = data; a.download = name.endsWith('.qvs') ? name : `${name}.qvs`;
       document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),0);
     }
+  }
+
+  // ===================== NEW: ExcelJS XLSX export helpers =====================
+  function pxToExcelCharWidth(px){
+    // Excel column width is roughly number of characters in default font.
+    const chars = Math.round((Number(px) || 80) / 7);
+    return Math.max(8, Math.min(80, chars));
+  }
+
+  function normalizeSheetName(name){
+    const s = String(name || 'Sheet').replace(/[:\\/?*\[\]]/g, ' ').trim();
+    return (s || 'Sheet').slice(0, 31);
+  }
+
+  function addHeaderStyle(ws, headerRowNumber, colsCount){
+    const headerRow = ws.getRow(headerRowNumber);
+    headerRow.font = { bold: true };
+    for (let c = 1; c <= colsCount; c++){
+      const cell = headerRow.getCell(c);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+      cell.border = { bottom: { style: 'thin' } };
+      cell.alignment = { vertical: 'middle', wrapText: true };
+    }
+  }
+
+  function applyUnusedRowStyle(row){
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
+    });
+  }
+
+  function applyWrapTopToRow(row){
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.alignment = Object.assign({}, cell.alignment || {}, { wrapText: true, vertical: 'top' });
+    });
+  }
+
+  function applyWrapTopToCell(cellObj){
+    cellObj.alignment = Object.assign({}, cellObj.alignment || {}, { wrapText: true, vertical: 'top' });
+  }
+
+  function setAutoFilter(ws, rowsCount, colsCount){
+    try{
+      ws.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: Math.max(1, rowsCount), column: Math.max(1, colsCount) }
+      };
+    } catch(e){}
+  }
+
+  function setFreezeHeader(ws){
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+  }
+
+  async function downloadXlsx(filename, workbook){
+    const name = filename && filename.trim() ? filename.trim() : 'Qollect_Metadata';
+    const finalName = name.toLowerCase().endsWith('.xlsx') ? name : `${name}.xlsx`;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = (window.URL||window.webkitURL).createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = finalName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      (window.URL||window.webkitURL).revokeObjectURL(url);
+    }, 0);
+  }
+function estimateColumnWidths(headers, matrix){
+  const PX_PER_CHAR = 7, PADDING = 16, MIN_W = 80, MAX_W = 600;
+  const cols = headers.length;
+  const maxLens = Array.from({ length: cols }, (_, i) => String(headers[i] ?? '').length);
+
+  for (const r of (matrix || [])) {
+    for (let c = 0; c < cols; c++) {
+      const len = String((r || [])[c] ?? '').replace(/\r?\n/g, '').length; // ignore line breaks for width
+      if (len > maxLens[c]) maxLens[c] = len;
+    }
+  }
+  return maxLens.map(len => Math.max(MIN_W, Math.min(MAX_W, len * PX_PER_CHAR + PADDING)));
+}
+
+  function addWorksheetXlsx(workbook, spec){
+    const ws = workbook.addWorksheet(normalizeSheetName(spec.name));
+
+    const headers = spec.headers || [];
+    const matrix = spec.matrix || [];
+    const colsCount = headers.length;
+    const rowsCount = matrix.length + 1;
+
+    // columns
+    const widthsPx = Array.isArray(spec.widths) && spec.widths.length
+      ? spec.widths.slice(0, colsCount)
+      : (AUTO_WIDTHS ? estimateColumnWidths(headers, matrix) : []);
+
+    ws.columns = headers.map((h, idx) => ({
+      header: String(h ?? ''),
+      key: `c${idx+1}`,
+      width: widthsPx.length ? pxToExcelCharWidth(widthsPx[idx] || 80) : 16
+    }));
+
+    // header style
+    addHeaderStyle(ws, 1, colsCount);
+
+    // rows
+    for (let r = 0; r < matrix.length; r++){
+      const rawRow = matrix[r] || [];
+      const excelRow = ws.addRow(rawRow.map(v => (v == null ? '' : v)));
+
+      // default wrap if requested per-sheet
+      if (spec.wrapAll) applyWrapTopToRow(excelRow);
+
+      // wrap by column indexes
+      if (Array.isArray(spec.wrapCols) && spec.wrapCols.length){
+        for (const colIndex1Based of spec.wrapCols){
+          const c = excelRow.getCell(colIndex1Based);
+          applyWrapTopToCell(c);
+        }
+      }
+
+      // wrap if cell contains line breaks
+      excelRow.eachCell({ includeEmpty: true }, (c) => {
+        const v = c.value;
+        const s = (v == null) ? '' : String(v);
+        if (/[\r\n]/.test(s)) applyWrapTopToCell(c);
+      });
+
+      // row style callback (unused, etc)
+      if (typeof spec.rowStyleId === 'function'){
+        const styleId = spec.rowStyleId(rawRow);
+        if (styleId === 'sUnused') applyUnusedRowStyle(excelRow);
+        if (styleId === 'sWrapTop') applyWrapTopToRow(excelRow);
+      }
+    }
+
+    // autofilter + freeze
+    if (AUTO_FILTERS) setAutoFilter(ws, rowsCount, colsCount);
+    if (FREEZE_HEADER) setFreezeHeader(ws);
+
+    return ws;
   }
 
   // ------- Engine helpers -------
@@ -1169,6 +1226,29 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   }
 
+  // ------- PATCH: Dynamic extension detection (no native types list) -------
+  function getInstalledExtensionIdSet(){
+    return new Promise((resolve) => {
+      try {
+        if (!qlik || typeof qlik.getExtensionList !== 'function') {
+          resolve(new Set());
+          return;
+        }
+        qlik.getExtensionList(function(list){
+          const set = new Set();
+          (list || []).forEach(x => {
+            // Qlik usually returns: { id, ... }, but be defensive
+            const id = String(x?.id || x?.value?.id || '').trim().toLowerCase();
+            if (id) set.add(id);
+          });
+          resolve(set);
+        });
+      } catch (e) {
+        resolve(new Set());
+      }
+    });
+  }
+
   function containerChildDisplayTitle(rawTitle, childType, childId){
     const t = String(rawTitle || '').trim();
     const hasRealTitle = t && t !== String(childId || '').trim() && !isGuidLike(t);
@@ -1293,98 +1373,6 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
     return lines.join('\r\n');
   }
 
-  // ------- Sheet builders -------
-  const buildOverviewSheet = (info) => {
-    const headers = [
-      'Application name','Application ID',
-      '# of Dimensions','# of Measures','# of Fields',
-      '# of Sheets','# of Charts','# of Variables'
-    ];
-    const matrix = [[
-      info.name || '', info.id || '',
-      Number(info.dims||0), Number(info.msrs||0), Number(info.flds||0),
-      Number(info.shts||0), Number(info.chrs||0), Number(info.vars||0)
-    ]];
-    return worksheetWithFeatures('App Overview', headers, matrix);
-  };
-
-  const buildDimSheet = dims => {
-    const headers = ['ID','Title','Fields','Label Expression','Description','Tags','Used Count'];
-    const matrix = dims.map(d => [d.id, d.title, d.fields, d.labelExpr, d.description, d.tags, Number(d.usedCount||0)]);
-    return worksheetWithFeatures('Dimensions', headers, matrix, { rowStyleId: r => (Number(r?.[6])===0 ? 'sUnused' : null) });
-  };
-  const buildMsrSheet = msrs => {
-    const headers = ['ID','Title','Expression','Label','Label Expression','Description','Tags','Used Count'];
-    const matrix = msrs.map(m => [m.id, m.title, m.expression, m.label, m.labelExpr, m.description, m.tags, Number(m.usedCount||0)]);
-    return worksheetWithFeatures('Measures', headers, matrix, { rowStyleId: r => (Number(r?.[7])===0 ? 'sUnused' : null) });
-  };
-  const buildFldSheet = (flds, unusedSet, usedInMap) => {
-    const headers = ['Field','Source Tables','Tags','Usage','Used In'];
-    // FIX: include "Key" and sort it first
-    const order = ['Key','Chart','Set analysis','Dimension','Measure','Variable'];
-    const fmtUsedIn = name => {
-      const s = usedInMap && usedInMap.get(name);
-      if (!s || !s.size) return '';
-      const arr = Array.from(s);
-      arr.sort((a,b)=> order.indexOf(a) - order.indexOf(b));
-      return arr.join(', ');
-    };
-    const matrix = flds.map(f => [
-      f.name, f.srcTables, f.tags,
-      unusedSet && unusedSet.has(f.name) ? 'UNUSED' : 'USED',
-      fmtUsedIn(f.name)
-    ]);
-    return worksheetWithFeatures('Fields', headers, matrix, { rowStyleId: r => (r?.[3]==='UNUSED' ? 'sUnused' : null) });
-  };
-  const buildShtSheet = shts => {
-    const headers = ['ID','Sheet Title','Description','Owner'];
-    const matrix = shts.map(s => [s.id, s.title, s.description, s.owner]);
-    return worksheetWithFeatures('Sheets', headers, matrix);
-  };
-
-  // ------- Charts builder -------
-  const buildChrSheet = chrs => {
-    const headers = ['Chart ID','Type','Title','Sheet','Sheet ID','Master?','Master ID','Items'];
-    const matrix = chrs.map(o => [o.objectId, o.type, o.title, o.sheetTitle, o.sheetId, o.isMaster, o.masterId, o.itemsSummary || '']);
-
-    // Narrow, readable defaults (points ≈ pixels). Last column wraps (sWrapTop).
-    const widths = [90, 70, 160, 200, 220, 60, 200, 360];
-
-    return worksheetWithFeatures('Charts', headers, matrix, {
-      rowStyleId: () => 'sWrapTop',
-      widths
-    });
-  };
-
-  const buildVarSheet = vars => {
-    const headers = ['Name','Definition','Comment','Tags','Script Variable?','Reserved?'];
-    const matrix = vars.map(v => [v.name, v.definition, v.comment, v.tags, v.isScript, v.isReserved]);
-    return worksheetWithFeatures('Variables', headers, matrix);
-  };
-
-  // ------- NEW: Script Metadata builder & parser -------
-  const buildScriptMetadataSheet = rows => {
-    const headers = ['Tab','LOADs','STOREs','JOINs','RESIDENTs','QVDs','Variables'];
-    const matrix = rows.map(r => [
-      r.tab,
-      Number(r.loads||0),
-      Number(r.stores||0),
-      Number(r.joins||0),
-      Number(r.residents||0),
-      (r.qvds||[]).join(', '),
-      (r.vars||[]).join(', ')
-    ]);
-    const widths = [180,70,70,70,90,320,260];
-    return worksheetWithFeatures('Script', headers, matrix, { widths, rowStyleId: () => 'sWrapTop' });
-  };
-
-  // ---- NEW: Script info (fallback) sheet
-  const buildScriptInfoSheet = (msg) => {
-    const headers = ['Info'];
-    const matrix = [[String(msg || 'Script metadata not available for this session.')]];
-    return worksheetWithFeatures('Script', headers, matrix, { widths: [600], rowStyleId: ()=>'sWrapTop' });
-  };
-
   // ---- Robust QVD filename extractor
   function extractQvdsFromLine(line){
     const hits = [];
@@ -1493,6 +1481,9 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
   async function fetchChartsViaEngine(app){
     await warmMasterCaches(app);
 
+    // PATCH: build extension id set dynamically (no native list)
+    const extIdSet = await getInstalledExtensionIdSet();
+
     const sheets = await fetchSheetsViaEngine(app);
     const charts = [];
     for (const sh of sheets) {
@@ -1509,18 +1500,25 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
             const p = await objModel.getProperties().catch(()=>null);
             const l = await objModel.getLayout().catch(()=>null);
 
-            const visType = (p?.visualization || c.type || l?.visualization || '').toLowerCase();
+            const rawType = (p?.visualization || c.type || l?.visualization || '');
+            const visType = String(rawType || '').toLowerCase();
+
             let itemsSummary = p ? await buildItemsSummary(app, p, l) : '';
 
-            // NEW: Container objects should list their children charts (tabs) and each child's dims/measures
+            // Container objects should list their children charts (tabs) and each child's dims/measures
             if (visType === 'container') {
               const containerSummary = await buildContainerItemsSummary(app, objModel, p, l);
               if (containerSummary && containerSummary.trim()) itemsSummary = containerSummary;
             }
 
+            // PATCH: Extension flag based on installed extension ids
+            // If we cannot fetch extension list, leave blank to avoid false positives.
+            const isExtension = extIdSet.size ? (extIdSet.has(visType) ? 'Y' : 'N') : '';
+
             charts.push({
               sheetTitle: sh.title, sheetId: sh.id, objectId: objId,
-              type: p?.visualization || c.type || '',
+              type: rawType,
+              isExtension,
               title: (typeof p?.title === 'string' ? p.title : (p?.title && p.title.qStringExpression) || ''),
               isMaster: p?.qExtendsId ? 'Y' : 'N', masterId: p?.qExtendsId || '',
               itemsSummary
@@ -1541,7 +1539,13 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       || '';
   }
 
-  async function exportSelected(app, fileName, opts){
+  // ===================== NEW: Export Selected (XLSX) using ExcelJS =====================
+  async function exportSelectedXlsx(app, fileName, opts){
+    if (!ExcelJS) {
+      alert('XLSX export unavailable: ExcelJS was not loaded. Please add exceljs.min.js into your extension folder and reference it as ./lib/exceljs.min in define().');
+      return;
+    }
+
     const { overview, dims, msrs, flds, shts, chrs, vars, scrmeta } = opts;
     if (!overview && !dims && !msrs && !flds && !shts && !chrs && !vars && !scrmeta) { alert('Nothing selected to export.'); return; }
 
@@ -1592,42 +1596,143 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
       }
     }
 
-    const sheets = [];
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Qollect';
+    workbook.created = new Date();
 
+    // Overview
     if (overview) {
       let appName = '', appId = getAppIdSafe(app);
       try {
         const layout = await getDoc(app).getAppLayout();
         appName = layout?.qTitle || '';
       } catch(e){}
-      sheets.push(buildOverviewSheet({
-        name: appName,
-        id: appId,
-        dims: DIMS.length,
-        msrs: MSRS.length,
-        flds: FLDS.length,
-        shts: SHTS.length,
-        chrs: CHRS.length,
-        vars: VARS.length
-      }));
+      const headers = [
+        'Application name','Application ID',
+        '# of Dimensions','# of Measures','# of Fields',
+        '# of Sheets','# of Charts','# of Variables'
+      ];
+      const matrix = [[
+        appName || '', appId || '',
+        Number(DIMS.length||0), Number(MSRS.length||0), Number(FLDS.length||0),
+        Number(SHTS.length||0), Number(CHRS.length||0), Number(VARS.length||0)
+      ]];
+      addWorksheetXlsx(workbook, { name: 'App Overview', headers, matrix });
     }
 
-    if (dims) sheets.push(buildDimSheet(sortAsc(DIMS, 'title')));
-    if (msrs) sheets.push(buildMsrSheet(sortAsc(MSRS, 'title')));
-    if (flds) sheets.push(buildFldSheet(sortAsc(FLDS, 'name'), unusedSet, usedInMap));
-    if (shts) sheets.push(buildShtSheet(sortAsc(SHTS, 'title')));
-    if (chrs) sheets.push(buildChrSheet(sortAsc(CHRS, 'title')));
-    if (vars) sheets.push(buildVarSheet(sortAsc(VARS, 'name')));
+    // Dimensions
+    if (dims) {
+      const headers = ['ID','Title','Fields','Label Expression','Description','Tags','Used Count'];
+      const dd = sortAsc(DIMS, 'title');
+      const matrix = dd.map(d => [d.id, d.title, d.fields, d.labelExpr, d.description, d.tags, Number(d.usedCount||0)]);
+      addWorksheetXlsx(workbook, {
+        name: 'Dimensions',
+        headers,
+        matrix,
+        rowStyleId: r => (Number(r?.[6])===0 ? 'sUnused' : null)
+      });
+    }
 
+    // Measures
+    if (msrs) {
+      const headers = ['ID','Title','Expression','Label','Label Expression','Description','Tags','Used Count'];
+      const mm = sortAsc(MSRS, 'title');
+      const matrix = mm.map(m => [m.id, m.title, m.expression, m.label, m.labelExpr, m.description, m.tags, Number(m.usedCount||0)]);
+      addWorksheetXlsx(workbook, {
+        name: 'Measures',
+        headers,
+        matrix,
+        rowStyleId: r => (Number(r?.[7])===0 ? 'sUnused' : null)
+      });
+    }
+
+    // Fields
+    if (flds) {
+      const headers = ['Field','Source Tables','Tags','Usage','Used In'];
+      const order = ['Key','Chart','Set analysis','Dimension','Measure','Variable'];
+      const fmtUsedIn = name => {
+        const s = usedInMap && usedInMap.get(name);
+        if (!s || !s.size) return '';
+        const arr = Array.from(s);
+        arr.sort((a,b)=> order.indexOf(a) - order.indexOf(b));
+        return arr.join(', ');
+      };
+      const ff = sortAsc(FLDS, 'name');
+      const matrix = ff.map(f => [
+        f.name, f.srcTables, f.tags,
+        unusedSet && unusedSet.has(f.name) ? 'UNUSED' : 'USED',
+        fmtUsedIn(f.name)
+      ]);
+      addWorksheetXlsx(workbook, {
+        name: 'Fields',
+        headers,
+        matrix,
+        rowStyleId: r => (r?.[3]==='UNUSED' ? 'sUnused' : null)
+      });
+    }
+
+    // Sheets
+    if (shts) {
+      const headers = ['ID','Sheet Title','Description','Owner'];
+      const ss = sortAsc(SHTS, 'title');
+      const matrix = ss.map(s => [s.id, s.title, s.description, s.owner]);
+      addWorksheetXlsx(workbook, { name: 'Sheets', headers, matrix });
+    }
+
+    // Charts
+    if (chrs) {
+      const headers = ['Chart ID','Type','Extension?','Title','Sheet','Sheet ID','Master?','Master ID','Items'];
+      const cc = sortAsc(CHRS, 'title');
+      const matrix = cc.map(o => [o.objectId, o.type, o.isExtension, o.title, o.sheetTitle, o.sheetId, o.isMaster, o.masterId, o.itemsSummary || '']);
+      const widths = [90, 70, 70, 160, 200, 220, 60, 200, 360];
+      addWorksheetXlsx(workbook, {
+        name: 'Charts',
+        headers,
+        matrix,
+        widths,
+        rowStyleId: () => 'sWrapTop',
+        wrapCols: [9] // Items column
+      });
+    }
+
+    // Variables
+    if (vars) {
+      const headers = ['Name','Definition','Comment','Tags','Script Variable?','Reserved?'];
+      const vv = sortAsc(VARS, 'name');
+      const matrix = vv.map(v => [v.name, v.definition, v.comment, v.tags, v.isScript, v.isReserved]);
+      addWorksheetXlsx(workbook, { name: 'Variables', headers, matrix, wrapAll: true });
+    }
+
+    // Script
     if (scrmeta) {
       if (scriptMetaRows && scriptMetaRows.length) {
-        sheets.push(buildScriptMetadataSheet(scriptMetaRows));
+        const headers = ['Tab','LOADs','STOREs','JOINs','RESIDENTs','QVDs','Variables'];
+        const matrix = scriptMetaRows.map(r => [
+          r.tab,
+          Number(r.loads||0),
+          Number(r.stores||0),
+          Number(r.joins||0),
+          Number(r.residents||0),
+          (r.qvds||[]).join(', '),
+          (r.vars||[]).join(', ')
+        ]);
+        const widths = [180,70,70,70,90,320,260];
+        addWorksheetXlsx(workbook, {
+          name: 'Script',
+          headers,
+          matrix,
+          widths,
+          rowStyleId: () => 'sWrapTop',
+          wrapAll: true
+        });
       } else if (scriptDenied) {
-        sheets.push(buildScriptInfoSheet('Script metadata not available for this session.'));
+        const headers = ['Info'];
+        const matrix = [[String('Script metadata not available for this session.')]];
+        addWorksheetXlsx(workbook, { name: 'Script', headers, matrix, widths: [600], wrapAll: true });
       }
     }
 
-    downloadXml(fileName || 'Qollect_Metadata', xlWorkbook(sheets.join('')));
+    await downloadXlsx(fileName || 'Qollect_Metadata', workbook);
   }
 
   // ------- Export App Script (.qvs) -------
@@ -1668,7 +1773,7 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer:   { component: 'text', label: 'Version: 1.3.3' },
+            aboutVer:   { component: 'text', label: 'Version: 1.4' },
             aboutAuth:  { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
@@ -1699,30 +1804,35 @@ define(['qlik', 'jquery', 'text!./qollect.css'], function (qlik, $, cssContent) 
             </ul>
 
             <div class="qollect__actions">
-              <button id="btn-${id}" class="qollect__btn" type="button">Export Selected (XLS)</button>
+              <button id="btn-xlsx-${id}" class="qollect__btn" type="button">Export Selected</button>              
               <button id="btn-script-${id}" class="qollect__btn qollect__btn--secondary" type="button" title="Download the app's load script as a .qvs file">Export App Script (.qvs)</button>
             </div>
           </div>
         </div>
       `);
 
-      const $btn = $element.find(`#btn-${id}`);
+      const $btnXlsx = $element.find(`#btn-xlsx-${id}`);
       const $btnScript = $element.find(`#btn-script-${id}`);
 
-      $btn.off('click').on('click', async () => {
-        const overview = $element.find(`#ovw-${id}`).is(':checked');
-        const dims = $element.find(`#dims-${id}`).is(':checked');
-        const msrs = $element.find(`#msrs-${id}`).is(':checked');
-        const vars = $element.find(`#vars-${id}`).is(':checked');
-        const flds = $element.find(`#flds-${id}`).is(':checked');
-        const shts = $element.find(`#shts-${id}`).is(':checked');
-        const chrs = $element.find(`#chrs-${id}`).is(':checked');
-        const scrmeta = $element.find(`#scrmeta-${id}`).is(':checked');
+      function readSelection(){
+        return {
+          overview: $element.find(`#ovw-${id}`).is(':checked'),
+          dims: $element.find(`#dims-${id}`).is(':checked'),
+          msrs: $element.find(`#msrs-${id}`).is(':checked'),
+          vars: $element.find(`#vars-${id}`).is(':checked'),
+          flds: $element.find(`#flds-${id}`).is(':checked'),
+          shts: $element.find(`#shts-${id}`).is(':checked'),
+          chrs: $element.find(`#chrs-${id}`).is(':checked'),
+          scrmeta: $element.find(`#scrmeta-${id}`).is(':checked')
+        };
+      }
 
-        $btn.prop('disabled', true).text('Exporting…');
-        try { await exportSelected(app, fileName, { overview, dims, msrs, flds, shts, chrs, vars, scrmeta }); }
-        catch (err) { console.error(err); alert('Export failed: ' + (err?.message || err)); }
-        finally { $btn.prop('disabled', false).text('Export Selected (XLS)'); }
+      $btnXlsx.off('click').on('click', async () => {
+        const sel = readSelection();
+        $btnXlsx.prop('disabled', true).text('Exporting…');
+        try { await exportSelectedXlsx(app, fileName, sel); }
+        catch (err) { console.error(err); alert('XLSX export failed: ' + (err?.message || err)); }
+        finally { $btnXlsx.prop('disabled', false).text('Export Selected (XLSX)'); }
       });
 
       $btnScript.off('click').on('click', async () => {
