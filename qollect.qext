@@ -2,11 +2,11 @@
   "name": "Qollect",
   "description": "Collect your Qlik app metadata in one click",
   "type": "visualization",
-  "version": "1.3.3",
+  "version": "1.4",
   "author": "Eli Gohar",
   "icon": "",
   "preview": "preview.png",
   "homepage": "",
-  "keywords": ["Qlik", "Sense", "metadata", "export", "xls", "dimensions", "measures", "variables"],
+  "keywords": ["Qlik", "Sense", "metadata", "export", "xlsx", "dimensions", "measures", "variables"],
   "main": "qollect.js"
 }
