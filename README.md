@@ -16,8 +16,9 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 
 ## Features
 
-- Collects key Qlik app metadata components - dimensions, measures, fields, charts, variables and sheets - into a structured format.  
-- **One-click** metadata collection inside your Qlik Sense app.  
+- Collects key Qlik app metadata components - dimensions, measures, fields, charts, variables and sheets - into a structured format.
+- **One-click** metadata collection inside your Qlik Sense app.
+- **Native XLSX export** - generates a real Excel `.xlsx` file (multiple sheets, auto widths, wrap text, filters, frozen header).
 - Clean, minimal output - ideal for sharing, reviewing, or maintaining documentation.
 
 ---
@@ -28,6 +29,13 @@ Qollect removes the hassle of hunting through your Qlik app to find object defin
 2. Open the Qlik Sense Management Console (QMC) and navigate to **Extensions**.  
 3. Upload `Qollect.zip`.  
 4. In your app, drag the **Qollect** visualization onto a sheet, click it, and you’ll have your metadata in just one click.
+
+---
+
+## Export formats
+
+- **XLSX (native Excel):** Full metadata export into a real `.xlsx` workbook.
+- **QVS:** Export the app load script to a `.qvs` file (when permissions allow).
 
 ---
 
@@ -54,6 +62,12 @@ If Qollect saves you time, consider supporting development:
 ---
 
 ## Changelog
+
+### v1.4.0
+- **Native XLSX export (ExcelJS):** Qollect now exports a real `.xlsx` Excel file (no legacy XML/XLS).
+Includes multi-sheet workbook, auto column widths, wrapped text, auto filters, and frozen header row.
+- **Charts extension flag:** Added **Extension? (Y/N)** column to quickly identify extension-based objects.
+- **Removed legacy XLS export:** XLSX is now the default and only Excel format.
 
 ### v1.3.3
 - **Added support for Box Plot charts:** fields used by box plot visuals are now correctly detected and marked as **USED**, and the **Items** column is no longer empty for this chart type.
@@ -87,6 +101,7 @@ If Qollect saves you time, consider supporting development:
 ## License
 
 Distributed under the MIT License. See `LICENSE` for details.
+This project uses **ExcelJS** (MIT License) for XLSX export.
 
 ---
 
