@@ -100,8 +100,8 @@ Includes multi-sheet workbook, auto column widths, wrapped text, auto filters, a
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for details.
-This project uses **ExcelJS** (MIT License) for XLSX export.
+- Distributed under the MIT License. See `LICENSE` for details.
+- This project uses **ExcelJS** (MIT License) for XLSX export.
 
 ---
 
