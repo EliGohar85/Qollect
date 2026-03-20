@@ -63,6 +63,10 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### v1.4.1
+- **Master Item IDs in Charts:** Added **Master Item IDs** to Dimensions and Measures listed in the *Charts* sheet **Items** column.
+- **Support for layout containers:** Added support for **`sn-layout-container`**, enabling proper export of nested items similar to native containers.
+
 ### v1.4.0
 - **Native XLSX export (ExcelJS):** Qollect now exports a real `.xlsx` Excel file (no legacy XML/XLS).
 Includes multi-sheet workbook, auto column widths, wrapped text, auto filters, and frozen header row.
