@@ -1445,27 +1445,67 @@ define(['qlik', 'jquery', 'text!./qollect.css', './exceljs.min'], function (qlik
     return out;
   }
 
-  // ------- Dynamic extension detection -------
-  function getInstalledExtensionIdSet() {
-    return new Promise((resolve) => {
-      try {
-        if (!qlik || typeof qlik.getExtensionList !== 'function') {
-          resolve(new Set());
-          return;
-        }
-        qlik.getExtensionList(function (list) {
-          const set = new Set();
-          (list || []).forEach(x => {
-            const id = String(x?.id || x?.value?.id || '').trim().toLowerCase();
-            if (id) set.add(id);
-          });
-          resolve(set);
-        });
-      } catch (e) {
-        resolve(new Set());
-      }
-    });
-  }
+let installedExtensionIdSetCache = null;
+
+async function getInstalledExtensionIdSet() {
+	  if (installedExtensionIdSetCache) {
+		return installedExtensionIdSetCache;
+	  }
+
+	  try {
+		const config = qlik?.config || {};
+		const prefix = config.prefix || '/';
+
+		const basePrefix =
+		  prefix === '/'
+			? ''
+			: '/' + String(prefix).replace(/^\/|\/$/g, '');
+
+		const xrfkey = '0123456789abcdef';
+
+		const response = await fetch(
+		  `${basePrefix}/qrs/extension/full?xrfkey=${xrfkey}`,
+		  {
+			method: 'GET',
+			credentials: 'same-origin',
+			headers: {
+			  'X-Qlik-Xrfkey': xrfkey,
+			  'Accept': 'application/json'
+			}
+		  }
+		);
+
+		if (!response.ok) {
+		  throw new Error(
+			`QRS extension request failed: ${response.status}`
+		  );
+		}
+
+		const list = await response.json();
+		const set = new Set();
+
+		(list || []).forEach(ext => {
+		  const id = String(
+			ext?.name ||
+			ext?.id ||
+			''
+		  ).trim().toLowerCase();
+
+		  if (id) set.add(id);
+		});
+
+		installedExtensionIdSetCache = set;
+		return set;
+
+	  } catch (e) {
+		console.warn(
+		  'Qollect: unable to retrieve installed extensions via QRS.',
+		  e
+		);
+
+		return new Set();
+	  }
+	}
 
   function containerChildDisplayTitle(rawTitle, childType, childId) {
     const t = String(rawTitle || '').trim();
@@ -2059,7 +2099,7 @@ define(['qlik', 'jquery', 'text!./qollect.css', './exceljs.min'], function (qlik
           type: 'items',
           items: {
             aboutTitle: { component: 'text', label: 'Qollect' },
-            aboutVer: { component: 'text', label: 'Version: 1.4.1' },
+            aboutVer: { component: 'text', label: 'Version: 1.4.2' },
             aboutAuth: { component: 'text', label: 'Author: Eli Gohar' },
             supportHdr: { component: 'text', label: 'Support development (Ko-fi):' },
             supportLnk: { component: 'link', label: 'ko-fi.com/eligohar', url: 'https://ko-fi.com/eligohar' }
