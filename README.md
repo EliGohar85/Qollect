@@ -63,6 +63,10 @@ If Qollect saves you time, consider supporting development:
 
 ## Changelog
 
+### v1.4.2
+- **Qlik API compatibility:** Replaced the deprecated `qlik.getExtensionList()` API with the Qlik Repository Service (QRS) REST API for extension detection.
+- **Improved extension detection:** Added caching of the installed extension list to avoid unnecessary API calls and removed the related deprecation warning from the browser console.
+
 ### v1.4.1
 - **Master Item IDs in Charts:** Added **Master Item IDs** to Dimensions and Measures listed in the *Charts* sheet **Items** column.
 - **Support for layout containers:** Added support for **`sn-layout-container`**, enabling proper export of nested items similar to native containers.
